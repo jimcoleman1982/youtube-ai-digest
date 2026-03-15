@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin - YouTube AI Digest</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>▶</text></svg>">
+  <style>
+    .admin-section {
+      margin-top: 24px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-lg);
+    }
+    .admin-section__title {
+      font-family: var(--font-display);
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin-bottom: 16px;
+    }
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-display);
+      font-size: 0.875rem;
+    }
+    .admin-table th {
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      padding: 8px 12px;
+      border-bottom: 2px solid var(--border);
+    }
+    .admin-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-light);
+      vertical-align: middle;
+    }
+    .admin-table tr:last-child td {
+      border-bottom: none;
+    }
+    .admin-remove-btn {
+      font-family: var(--font-display);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--red);
+      color: var(--red);
+      background: transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+      min-height: 32px;
+    }
+    .admin-remove-btn:hover {
+      background: var(--red);
+      color: white;
+    }
+    .admin-add-form {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .admin-add-input {
+      flex: 1;
+      font-family: var(--font-display);
+      font-size: 0.9375rem;
+      padding: 10px 14px;
+      border: 2px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      min-height: 44px;
+    }
+    .admin-add-input:focus {
+      border-color: var(--teal);
+    }
+    .admin-add-btn {
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 0.875rem;
+      padding: 10px 20px;
+      background: var(--teal);
+      color: white;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      min-height: 44px;
+      transition: background 0.15s;
+    }
+    .admin-add-btn:hover {
+      background: var(--teal-dark);
+    }
+    .admin-add-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .admin-msg {
+      margin-top: 10px;
+      font-family: var(--font-display);
+      font-size: 0.875rem;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      display: none;
+    }
+    .admin-msg--success {
+      display: block;
+      background: #E8F5E9;
+      color: var(--green);
+    }
+    .admin-msg--error {
+      display: block;
+      background: var(--red-light);
+      color: var(--red);
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .stat-card {
+      padding: 14px;
+      background: var(--bg);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-light);
+    }
+    .stat-card__label {
+      font-family: var(--font-display);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .stat-card__value {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    @media (max-width: 600px) {
+      .admin-table th:nth-child(3),
+      .admin-table td:nth-child(3) {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="app-header__inner">
+      <div class="app-title">
+        <span class="app-title__icon">▶</span>
+        AI Digest
+      </div>
+      <nav class="app-nav">
+        <a href="index.html">Digest</a>
+        <a href="admin.html" style="color: var(--bg)">Admin</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Status Dashboard -->
+    <div class="admin-section">
+      <div class="admin-section__title">Status</div>
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat-card">
+          <div class="stat-card__label">Last Check</div>
+          <div class="stat-card__value" id="stat-last-check">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Channels</div>
+          <div class="stat-card__value" id="stat-channels">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Videos Today</div>
+          <div class="stat-card__value" id="stat-today">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Total Processed</div>
+          <div class="stat-card__value" id="stat-total">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Monthly Cost</div>
+          <div class="stat-card__value" id="stat-cost">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Avg/Video</div>
+          <div class="stat-card__value" id="stat-avg">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Projected Month</div>
+          <div class="stat-card__value" id="stat-projected">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__label">Ad-hoc Cost</div>
+          <div class="stat-card__value" id="stat-adhoc">--</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Channel Management -->
+    <div class="admin-section">
+      <div class="admin-section__title">Monitored Channels</div>
+
+      <div style="overflow-x:auto">
+        <table class="admin-table" id="channels-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>URL</th>
+              <th>Added</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="channels-tbody">
+            <tr><td colspan="4" style="color:var(--text-muted);text-align:center;padding:20px">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <form class="admin-add-form" id="add-form">
+        <input
+          type="text"
+          class="admin-add-input"
+          id="add-input"
+          placeholder="YouTube channel URL or @handle..."
+          aria-label="YouTube channel URL"
+        >
+        <button type="submit" class="admin-add-btn" id="add-btn">Add</button>
+      </form>
+      <div class="admin-msg" id="add-msg"></div>
+    </div>
+
+  </main>
+
+  <script src="admin/admin.js"></script>
+
+</body>
+</html>

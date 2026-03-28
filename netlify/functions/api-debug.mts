@@ -23,12 +23,37 @@ export default async (req: Request, context: Context) => {
     // Test transcript fetch
     const testVideoId = url.searchParams.get("test");
     if (testVideoId) {
+      const siteUrl = Netlify.env.get("URL") || "https://youtube-ai-digest.netlify.app";
+      const proxyUrl = `${siteUrl}/edge/transcript-proxy?videoId=${testVideoId}`;
+
+      // First test: direct edge function call
+      let edgeResult: any = {};
+      try {
+        const edgeRes = await fetch(proxyUrl);
+        edgeResult = {
+          status: edgeRes.status,
+          contentType: edgeRes.headers.get("content-type"),
+          body: await edgeRes.text(),
+        };
+        // Try to parse as JSON
+        try {
+          edgeResult.parsed = JSON.parse(edgeResult.body);
+          edgeResult.body = `[${edgeResult.body.length} chars]`;
+        } catch { /* not json */ }
+      } catch (err) {
+        edgeResult = { error: String(err) };
+      }
+
+      // Second test: through transcript.ts
       const startTime = Date.now();
       const segments = await fetchTranscript(testVideoId);
       const elapsed = Date.now() - startTime;
 
       return Response.json({
         videoId: testVideoId,
+        siteUrl,
+        proxyUrl,
+        edgeResult,
         success: segments !== null && segments.length > 0,
         segmentCount: segments?.length || 0,
         firstSegment: segments?.[0] || null,

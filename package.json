@@ -6,11 +6,12 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@netlify/blobs": "^8.1.0",
-    "youtube-transcript": "^1.2.1",
-    "fast-xml-parser": "^4.5.1"
+    "fast-xml-parser": "^4.5.1",
+    "youtube-transcript": "^1.2.1"
   },
   "devDependencies": {
     "@netlify/functions": "^3.0.0",
+    "netlify-cli": "^24.2.0",
     "typescript": "^5.7.0"
   }
 }

@@ -10,37 +10,35 @@ import type {
 const STORE_NAME = "youtube-digest";
 
 function store() {
-  return getStore(STORE_NAME);
+  return getStore({ name: STORE_NAME, consistency: "strong" });
 }
 
 // --- Channels ---
 
 export async function getChannels(): Promise<Channel[]> {
   const s = store();
-  const data = await s.get("channels");
-  if (!data) return [];
-  return JSON.parse(data) as Channel[];
+  const data = await s.get("channels", { type: "json" });
+  return (data as Channel[]) || [];
 }
 
 export async function setChannels(channels: Channel[]): Promise<void> {
   const s = store();
-  await s.set("channels", JSON.stringify(channels));
+  await s.setJSON("channels", channels);
 }
 
 // --- Processed Videos ---
 
 export async function getProcessedVideos(): Promise<ProcessedVideo[]> {
   const s = store();
-  const data = await s.get("processed-videos");
-  if (!data) return [];
-  return JSON.parse(data) as ProcessedVideo[];
+  const data = await s.get("processed-videos", { type: "json" });
+  return (data as ProcessedVideo[]) || [];
 }
 
 export async function setProcessedVideos(
   videos: ProcessedVideo[]
 ): Promise<void> {
   const s = store();
-  await s.set("processed-videos", JSON.stringify(videos));
+  await s.setJSON("processed-videos", videos);
 }
 
 export function pruneProcessedVideos(
@@ -54,16 +52,15 @@ export function pruneProcessedVideos(
 
 export async function getSummariesIndex(): Promise<SummaryIndex[]> {
   const s = store();
-  const data = await s.get("summaries-index");
-  if (!data) return [];
-  return JSON.parse(data) as SummaryIndex[];
+  const data = await s.get("summaries-index", { type: "json" });
+  return (data as SummaryIndex[]) || [];
 }
 
 export async function setSummariesIndex(
   index: SummaryIndex[]
 ): Promise<void> {
   const s = store();
-  await s.set("summaries-index", JSON.stringify(index));
+  await s.setJSON("summaries-index", index);
 }
 
 // --- Individual Summaries ---
@@ -72,9 +69,8 @@ export async function getSummary(
   videoId: string
 ): Promise<FullSummary | null> {
   const s = store();
-  const data = await s.get(`summary:${videoId}`);
-  if (!data) return null;
-  return JSON.parse(data) as FullSummary;
+  const data = await s.get(`summary:${videoId}`, { type: "json" });
+  return (data as FullSummary) || null;
 }
 
 export async function setSummary(
@@ -82,23 +78,22 @@ export async function setSummary(
   summary: FullSummary
 ): Promise<void> {
   const s = store();
-  await s.set(`summary:${videoId}`, JSON.stringify(summary));
+  await s.setJSON(`summary:${videoId}`, summary);
 }
 
 // --- Usage Log ---
 
 export async function getUsageLog(): Promise<UsageLogEntry[]> {
   const s = store();
-  const data = await s.get("usage-log");
-  if (!data) return [];
-  return JSON.parse(data) as UsageLogEntry[];
+  const data = await s.get("usage-log", { type: "json" });
+  return (data as UsageLogEntry[]) || [];
 }
 
 export async function appendUsageLog(entry: UsageLogEntry): Promise<void> {
   const log = await getUsageLog();
   log.push(entry);
   const s = store();
-  await s.set("usage-log", JSON.stringify(log));
+  await s.setJSON("usage-log", log);
 }
 
 // --- Last Check ---

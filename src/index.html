@@ -32,10 +32,6 @@
         <span id="stats-new">0 new today</span>
       </span>
       <span class="stats-bar__item">
-        <span class="stats-bar__dot stats-bar__dot--amber"></span>
-        <span id="stats-important">0 high-importance</span>
-      </span>
-      <span class="stats-bar__item">
         <span class="stats-bar__dot"></span>
         <span id="stats-read-time">~0 min read</span>
       </span>
@@ -83,15 +79,19 @@
             <option value="">All Channels</option>
           </select>
         </button>
-        <button class="filter-pill" id="filter-starred" aria-pressed="false">
-          &#9733; Starred
-        </button>
         <button class="filter-pill" id="filter-unread" aria-pressed="false">
           Unread
         </button>
-        <button class="filter-pill" id="filter-importance" aria-pressed="false">
-          &#9733;&#9733;&#9733;&#9733;+
-        </button>
+      </div>
+    </section>
+
+    <!-- Channel Selector -->
+    <section class="channel-selector" id="channel-selector">
+      <label class="channel-selector__label" for="channel-select">Channel</label>
+      <div class="channel-selector__wrap">
+        <select class="channel-selector__select" id="channel-select">
+          <option value="">All Channels (18)</option>
+        </select>
       </div>
     </section>
 

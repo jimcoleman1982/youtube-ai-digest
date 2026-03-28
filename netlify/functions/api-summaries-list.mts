@@ -31,6 +31,13 @@ export default async function handler(request: Request) {
     );
   }
 
+  // Sort newest first by processedAt
+  index.sort((a, b) => {
+    const ta = a.processedAt || a.publishedDate || "";
+    const tb = b.processedAt || b.publishedDate || "";
+    return tb.localeCompare(ta);
+  });
+
   const total = index.length;
   const start = (page - 1) * pageSize;
   const paginated = index.slice(start, start + pageSize);

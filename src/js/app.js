@@ -15,9 +15,7 @@ const DigestApp = (() => {
 
   // Filters
   let filterChannel = '';
-  let filterStarred = false;
   let filterUnread = false;
-  let filterImportance = false;
   let searchQuery = '';
 
   // DOM refs
@@ -27,7 +25,6 @@ const DigestApp = (() => {
   const loadMoreWrap = document.getElementById('load-more');
   const loadMoreBtn = document.getElementById('load-more-btn');
   const statsNew = document.getElementById('stats-new');
-  const statsImportant = document.getElementById('stats-important');
   const statsReadTime = document.getElementById('stats-read-time');
   const statsUnread = document.getElementById('stats-unread');
 
@@ -37,7 +34,6 @@ const DigestApp = (() => {
     const params = new URLSearchParams({ page: String(page) });
     if (filterChannel) params.set('channel', filterChannel);
     if (searchQuery) params.set('search', searchQuery);
-    if (filterImportance) params.set('importance', '4');
 
     const res = await fetch(`/api/summaries?${params}`);
     return res.json();
@@ -93,18 +89,11 @@ const DigestApp = (() => {
   function applyFilters() {
     let list = [...allSummaries];
 
-    if (filterStarred) {
-      const starred = DigestState.getStarredSet();
-      list = list.filter(s => starred.has(s.videoId));
-    }
-
     if (filterUnread) {
       const read = DigestState.getReadSet();
       list = list.filter(s => !read.has(s.videoId));
     }
 
-    // Channel and importance filters are applied server-side,
-    // but also filter client-side for local-only filters
     filteredSummaries = list;
   }
 
@@ -121,15 +110,6 @@ const DigestApp = (() => {
       reload();
     });
 
-    // Starred
-    document.getElementById('filter-starred').addEventListener('click', function() {
-      filterStarred = !filterStarred;
-      this.classList.toggle('is-active', filterStarred);
-      this.setAttribute('aria-pressed', filterStarred);
-      applyFilters();
-      render();
-    });
-
     // Unread
     document.getElementById('filter-unread').addEventListener('click', function() {
       filterUnread = !filterUnread;
@@ -137,14 +117,6 @@ const DigestApp = (() => {
       this.setAttribute('aria-pressed', filterUnread);
       applyFilters();
       render();
-    });
-
-    // Importance
-    document.getElementById('filter-importance').addEventListener('click', function() {
-      filterImportance = !filterImportance;
-      this.classList.toggle('is-active', filterImportance);
-      this.setAttribute('aria-pressed', filterImportance);
-      reload();
     });
 
     // Search
@@ -179,6 +151,49 @@ const DigestApp = (() => {
       opt.textContent = ch.channelName;
       select.appendChild(opt);
     });
+
+    // Also populate the channel selector dropdown
+    populateChannelSelect();
+  }
+
+  function populateChannelSelect() {
+    const select = document.getElementById('channel-select');
+    if (!select) return;
+
+    // Remove all but first option
+    while (select.options.length > 1) select.remove(1);
+
+    // Update count in first option
+    select.options[0].textContent = `All Channels (${channels.length})`;
+
+    // Sort channels alphabetically
+    const sorted = [...channels].sort((a, b) =>
+      a.channelName.localeCompare(b.channelName)
+    );
+
+    sorted.forEach(ch => {
+      const opt = document.createElement('option');
+      opt.value = ch.channelName;
+      opt.textContent = ch.channelName;
+      select.appendChild(opt);
+    });
+
+    // Bind change event (only once)
+    if (!select._bound) {
+      select._bound = true;
+      select.addEventListener('change', () => {
+        filterChannel = select.value;
+
+        // Sync with the filter pill dropdown
+        const channelFilterSelect = document.getElementById('filter-channel-select');
+        const channelLabel = document.getElementById('filter-channel-label');
+        channelFilterSelect.value = select.value;
+        channelLabel.textContent = select.value || 'All Channels';
+        document.getElementById('filter-channel').classList.toggle('is-active', !!select.value);
+
+        reload();
+      });
+    }
   }
 
   function bindLoadMore() {
@@ -224,6 +239,14 @@ const DigestApp = (() => {
       const day = (s.processedAt || s.publishedDate || '').split('T')[0];
       if (!groups.has(day)) groups.set(day, []);
       groups.get(day).push(s);
+    });
+    // Sort within each day: newest first
+    groups.forEach((items) => {
+      items.sort((a, b) => {
+        const ta = a.processedAt || a.publishedDate || '';
+        const tb = b.processedAt || b.publishedDate || '';
+        return tb.localeCompare(ta);
+      });
     });
     return groups;
   }
@@ -312,18 +335,18 @@ const DigestApp = (() => {
     const frag = document.createDocumentFragment();
     const s = summary.summary || summary;
     const videoId = summary.videoId;
-    const stars = '\u2605'.repeat(Math.min(Math.max(s.importanceScore || summary.importanceScore || 3, 1), 5));
-
     // Collapsed section
     const collapsed = document.createElement('div');
     collapsed.className = 'video-card__collapsed';
 
+    const publishedMT = formatMountainTime(summary.publishedDate);
+
     collapsed.innerHTML = `
       <div class="video-card__meta">
         <span class="video-card__channel">${escapeHtml(summary.channelName || '')}</span>
-        <span class="video-card__stars">${stars}</span>
       </div>
       <div class="video-card__title">${escapeHtml(summary.title || '')}</div>
+      ${publishedMT ? `<div class="video-card__published">${publishedMT}</div>` : ''}
     `;
 
     // Timeline bar
@@ -388,6 +411,18 @@ const DigestApp = (() => {
 
     let html = '';
 
+    // Topic Timestamps at the top (clickable jump-to links)
+    if (s.keyMoments && s.keyMoments.length) {
+      html += `<div class="topic-timestamps">
+        <div class="topic-timestamps__label">Topics</div>
+        <ul class="topic-timestamps__list">
+          ${s.keyMoments.map(m =>
+            `<li class="topic-timestamps__item"><a class="ts-link" href="https://youtube.com/watch?v=${videoId}&t=${m.seconds}" target="_blank" rel="noopener">${escapeHtml(m.timestamp)}</a> ${escapeHtml(m.label)}</li>`
+          ).join('')}
+        </ul>
+      </div>`;
+    }
+
     // Key Points
     if (s.keyPoints && s.keyPoints.length) {
       html += `<div class="summary-section">
@@ -414,20 +449,8 @@ const DigestApp = (() => {
       </div>`;
     }
 
-    // Key Moments list
-    if (s.keyMoments && s.keyMoments.length) {
-      html += `<div class="summary-section">
-        <div class="summary-section__label">Key Moments</div>
-        <ul class="key-moments-list">
-          ${s.keyMoments.map(m =>
-            `<li><a class="ts-link" href="https://youtube.com/watch?v=${videoId}&t=${m.seconds}" target="_blank" rel="noopener">${escapeHtml(m.timestamp)}</a> ${escapeHtml(m.label)}</li>`
-          ).join('')}
-        </ul>
-      </div>`;
-    }
 
     // Actions
-    const isStarred = DigestState.isStarred(videoId);
     const isRead = DigestState.isRead(videoId);
 
     html += `<div class="card-actions">
@@ -437,9 +460,6 @@ const DigestApp = (() => {
       ${TTS.supported ? `<button class="card-action card-action--listen" data-video-id="${videoId}">
         &#128266; Listen
       </button>` : ''}
-      <button class="card-action card-action--star ${isStarred ? 'is-starred' : ''}" data-video-id="${videoId}">
-        ${isStarred ? '\u2605 Starred' : '\u2606 Star'}
-      </button>
       <button class="card-action card-action--read ${isRead ? 'is-read' : ''}" data-video-id="${videoId}">
         ${isRead ? '\u2714 Read' : '\u2714 Mark Read'}
       </button>
@@ -466,18 +486,6 @@ const DigestApp = (() => {
   function bindCardActions(container, full) {
     const videoId = full.videoId;
     const s = full.summary || full;
-
-    // Star
-    const starBtn = container.querySelector('.card-action--star');
-    if (starBtn) {
-      starBtn.addEventListener('click', () => {
-        const nowStarred = DigestState.toggleStar(videoId);
-        starBtn.classList.toggle('is-starred', nowStarred);
-        starBtn.innerHTML = nowStarred ? '\u2605 Starred' : '\u2606 Star';
-        // Re-render if starred filter is active
-        if (filterStarred) { applyFilters(); render(); }
-      });
-    }
 
     // Mark Read
     const readBtn = container.querySelector('.card-action--read');
@@ -562,11 +570,9 @@ const DigestApp = (() => {
     );
     const readSet = DigestState.getReadSet();
     const unreadCount = allSummaries.filter(s => !readSet.has(s.videoId)).length;
-    const highImportance = todaySummaries.filter(s => (s.importanceScore || 0) >= 4).length;
     const readMinutes = Math.ceil((allSummaries.length * 500) / 250); // ~500 words per summary, 250 wpm
 
     statsNew.textContent = `${todaySummaries.length} new today`;
-    statsImportant.textContent = `${highImportance} high-importance`;
     statsReadTime.textContent = `~${readMinutes} min read`;
     statsUnread.textContent = `${unreadCount} unread`;
   }
@@ -578,6 +584,24 @@ const DigestApp = (() => {
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+  }
+
+  function formatMountainTime(isoStr) {
+    if (!isoStr) return '';
+    try {
+      const d = new Date(isoStr);
+      return d.toLocaleString('en-US', {
+        timeZone: 'America/Denver',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      }) + ' MT';
+    } catch {
+      return '';
+    }
   }
 
   function linkifyTimestamps(html, videoId) {

@@ -1,4 +1,3 @@
-import { XMLParser } from "fast-xml-parser";
 import type { TranscriptSegment } from "./types.js";
 
 /**
@@ -41,51 +40,50 @@ export async function fetchTranscript(
 }
 
 function parseTranscriptXml(xml: string): TranscriptSegment[] | null {
-  try {
-    const parser = new XMLParser({
-      ignoreAttributes: false,
-      attributeNamePrefix: "@_",
-    });
-    const parsed = parser.parse(xml);
+  // Use regex parsing for reliability across YouTube XML format variants
+  const segments: TranscriptSegment[] = [];
+  const pRegex = /<p\s[^>]*?t="(\d+)"[^>]*?d="(\d+)"[^>]*?>([\s\S]*?)<\/p>/g;
+  const sTextRegex = /<s[^>]*?>([\s\S]*?)<\/s>/g;
+  const stripTags = /<[^>]+>/g;
 
-    const body = parsed?.timedtext?.body;
-    if (!body) return null;
+  let match;
+  while ((match = pRegex.exec(xml)) !== null) {
+    const offset = parseInt(match[1]);
+    const duration = parseInt(match[2]);
+    const inner = match[3];
 
-    let paragraphs = body.p;
-    if (!paragraphs) return null;
-    if (!Array.isArray(paragraphs)) paragraphs = [paragraphs];
-
-    const segments: TranscriptSegment[] = [];
-    for (const p of paragraphs) {
-      const offset = parseInt(p["@_t"] || "0");
-      const duration = parseInt(p["@_d"] || "0");
-
-      let text = "";
-      if (typeof p === "string") {
-        text = p;
-      } else if (p.s) {
-        const spans = Array.isArray(p.s) ? p.s : [p.s];
-        text = spans
-          .map((s: any) => (typeof s === "string" ? s : s["#text"] || ""))
-          .join(" ");
-      } else if (p["#text"] !== undefined) {
-        text = String(p["#text"]);
-      }
-
-      if (text) {
-        segments.push({
-          text: decodeHtmlEntities(text.trim()),
-          offset,
-          duration,
-        });
-      }
+    let text = "";
+    // Check for <s> sub-elements (format 3)
+    const sMatches = inner.match(sTextRegex);
+    if (sMatches) {
+      text = sMatches
+        .map((s) => s.replace(stripTags, ""))
+        .join(" ");
+    } else {
+      // Plain text inside <p>
+      text = inner.replace(stripTags, "");
     }
 
-    return segments.length > 0 ? segments : null;
-  } catch (err) {
-    console.error("Failed to parse transcript XML:", err);
-    return null;
+    text = decodeHtmlEntities(text.trim());
+    if (text) {
+      segments.push({ text, offset, duration });
+    }
   }
+
+  // Fallback: try format without </p> closing tags (self-closing or simple)
+  if (segments.length === 0) {
+    const simpleRegex = /<text\s[^>]*?start="([\d.]+)"[^>]*?dur="([\d.]+)"[^>]*?>([\s\S]*?)<\/text>/g;
+    while ((match = simpleRegex.exec(xml)) !== null) {
+      const offset = Math.round(parseFloat(match[1]) * 1000);
+      const duration = Math.round(parseFloat(match[2]) * 1000);
+      const text = decodeHtmlEntities(match[3].replace(stripTags, "").trim());
+      if (text) {
+        segments.push({ text, offset, duration });
+      }
+    }
+  }
+
+  return segments.length > 0 ? segments : null;
 }
 
 function decodeHtmlEntities(str: string): string {

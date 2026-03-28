@@ -1,13 +1,49 @@
 import type { TranscriptSegment } from "./types.js";
 
 /**
- * Fetch transcript via the site's own edge function proxy.
- * Edge functions run on different infrastructure than serverless functions,
- * avoiding YouTube's datacenter IP blocking.
+ * Fetch transcript for a YouTube video.
+ * Strategy 1: Local proxy via TRANSCRIPT_PROXY_URL (residential IP, most reliable)
+ * Strategy 2: Edge function proxy (datacenter IP, works for some videos)
  */
 export async function fetchTranscript(
   videoId: string
 ): Promise<TranscriptSegment[] | null> {
+  // Strategy 1: Local proxy (residential IP via Cloudflare Tunnel)
+  const proxyUrl = Netlify.env.get("TRANSCRIPT_PROXY_URL");
+  const proxySecret = Netlify.env.get("TRANSCRIPT_PROXY_SECRET") || "";
+
+  if (proxyUrl) {
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (proxySecret) {
+        headers["Authorization"] = `Bearer ${proxySecret}`;
+      }
+
+      const res = await fetch(`${proxyUrl}/transcript`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ videoId }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.segments) && data.segments.length > 0) {
+          return data.segments as TranscriptSegment[];
+        }
+        console.log(
+          `Local proxy: no transcript for ${videoId}: ${data.error || "no segments"}`
+        );
+      } else {
+        console.log(`Local proxy returned ${res.status} for ${videoId}`);
+      }
+    } catch (err) {
+      console.log(`Local proxy unreachable for ${videoId}: ${err}`);
+    }
+  }
+
+  // Strategy 2: Edge function proxy (different datacenter IPs)
   const siteUrl =
     Netlify.env.get("URL") || "https://youtube-ai-digest.netlify.app";
 
@@ -18,7 +54,7 @@ export async function fetchTranscript(
 
     if (!res.ok) {
       console.error(
-        `Edge transcript proxy returned ${res.status} for ${videoId}`
+        `Edge proxy returned ${res.status} for ${videoId}`
       );
       return null;
     }
@@ -27,20 +63,19 @@ export async function fetchTranscript(
 
     if (!data.success || !data.transcript) {
       console.log(
-        `No transcript from edge proxy for ${videoId}: ${data.error || "unknown"}`
+        `Edge proxy: no transcript for ${videoId}: ${data.error || "unknown"}`
       );
       return null;
     }
 
     return parseTranscriptXml(data.transcript);
   } catch (err) {
-    console.error(`Transcript fetch error for ${videoId}:`, err);
+    console.error(`Edge proxy error for ${videoId}:`, err);
     return null;
   }
 }
 
 function parseTranscriptXml(xml: string): TranscriptSegment[] | null {
-  // Use regex parsing for reliability across YouTube XML format variants
   const segments: TranscriptSegment[] = [];
   const pRegex = /<p\s[^>]*?t="(\d+)"[^>]*?d="(\d+)"[^>]*?>([\s\S]*?)<\/p>/g;
   const sTextRegex = /<s[^>]*?>([\s\S]*?)<\/s>/g;
@@ -53,14 +88,10 @@ function parseTranscriptXml(xml: string): TranscriptSegment[] | null {
     const inner = match[3];
 
     let text = "";
-    // Check for <s> sub-elements (format 3)
     const sMatches = inner.match(sTextRegex);
     if (sMatches) {
-      text = sMatches
-        .map((s) => s.replace(stripTags, ""))
-        .join(" ");
+      text = sMatches.map((s) => s.replace(stripTags, "")).join(" ");
     } else {
-      // Plain text inside <p>
       text = inner.replace(stripTags, "");
     }
 
@@ -70,9 +101,9 @@ function parseTranscriptXml(xml: string): TranscriptSegment[] | null {
     }
   }
 
-  // Fallback: try format without </p> closing tags (self-closing or simple)
   if (segments.length === 0) {
-    const simpleRegex = /<text\s[^>]*?start="([\d.]+)"[^>]*?dur="([\d.]+)"[^>]*?>([\s\S]*?)<\/text>/g;
+    const simpleRegex =
+      /<text\s[^>]*?start="([\d.]+)"[^>]*?dur="([\d.]+)"[^>]*?>([\s\S]*?)<\/text>/g;
     while ((match = simpleRegex.exec(xml)) !== null) {
       const offset = Math.round(parseFloat(match[1]) * 1000);
       const duration = Math.round(parseFloat(match[2]) * 1000);
@@ -94,7 +125,12 @@ function decodeHtmlEntities(str: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num)));
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
+      String.fromCodePoint(parseInt(hex, 16))
+    )
+    .replace(/&#(\d+);/g, (_, num) =>
+      String.fromCodePoint(parseInt(num, 10))
+    );
 }
 
 function formatTime(seconds: number): string {

@@ -13,7 +13,7 @@ jobs:
         with:
           node-version: "22"
 
-      - run: npm ci
+      - run: npm install --no-optional
 
       - run: npx netlify deploy --prod --skip-functions-cache
         env:

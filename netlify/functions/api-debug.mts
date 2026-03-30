@@ -24,27 +24,36 @@ export default async (req: Request, context: Context) => {
     const testVideoId = url.searchParams.get("test");
     if (testVideoId) {
       const siteUrl = Netlify.env.get("URL") || "https://youtube-ai-digest.netlify.app";
-      const proxyUrl = `${siteUrl}/edge/transcript-proxy?videoId=${testVideoId}`;
+      const transcriptProxyUrl = Netlify.env.get("TRANSCRIPT_PROXY_URL") || "";
+      const transcriptProxySecret = Netlify.env.get("TRANSCRIPT_PROXY_SECRET") || "";
 
-      // First test: direct edge function call
-      let edgeResult: any = {};
-      try {
-        const edgeRes = await fetch(proxyUrl);
-        edgeResult = {
-          status: edgeRes.status,
-          contentType: edgeRes.headers.get("content-type"),
-          body: await edgeRes.text(),
-        };
-        // Try to parse as JSON
+      // Test 1: Direct local proxy test (if configured)
+      let proxyResult: any = { configured: !!transcriptProxyUrl, url: transcriptProxyUrl || "NOT SET" };
+      if (transcriptProxyUrl) {
         try {
-          edgeResult.parsed = JSON.parse(edgeResult.body);
-          edgeResult.body = `[${edgeResult.body.length} chars]`;
-        } catch { /* not json */ }
-      } catch (err) {
-        edgeResult = { error: String(err) };
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (transcriptProxySecret) {
+            headers["Authorization"] = `Bearer ${transcriptProxySecret}`;
+          }
+          const proxyRes = await fetch(`${transcriptProxyUrl}/transcript`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ videoId: testVideoId }),
+          });
+          const proxyBody = await proxyRes.text();
+          proxyResult.status = proxyRes.status;
+          try {
+            proxyResult.parsed = JSON.parse(proxyBody);
+            proxyResult.bodyLength = proxyBody.length;
+          } catch {
+            proxyResult.body = proxyBody.slice(0, 500);
+          }
+        } catch (err) {
+          proxyResult.error = String(err);
+        }
       }
 
-      // Second test: through transcript.ts
+      // Test 2: Through fetchTranscript (full pipeline)
       const startTime = Date.now();
       const segments = await fetchTranscript(testVideoId);
       const elapsed = Date.now() - startTime;
@@ -52,13 +61,17 @@ export default async (req: Request, context: Context) => {
       return Response.json({
         videoId: testVideoId,
         siteUrl,
-        proxyUrl,
-        edgeResult,
-        success: segments !== null && segments.length > 0,
-        segmentCount: segments?.length || 0,
-        firstSegment: segments?.[0] || null,
-        lastSegment: segments?.[segments.length - 1] || null,
-        elapsedMs: elapsed,
+        env: {
+          TRANSCRIPT_PROXY_URL: transcriptProxyUrl || "NOT SET",
+          TRANSCRIPT_PROXY_SECRET: transcriptProxySecret ? "SET" : "NOT SET",
+        },
+        proxyResult,
+        fetchTranscriptResult: {
+          success: segments !== null && segments.length > 0,
+          segmentCount: segments?.length || 0,
+          firstSegment: segments?.[0] || null,
+          elapsedMs: elapsed,
+        },
       });
     }
 

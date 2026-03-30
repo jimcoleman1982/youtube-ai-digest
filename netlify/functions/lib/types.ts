@@ -9,7 +9,14 @@ export interface ProcessedVideo {
   videoId: string;
   processedAt: string; // ISO timestamp
   attempts: number;
-  status: "completed" | "no-transcript" | "pending";
+  status: "completed" | "no-transcript" | "pending" | "retrying";
+  retryAfter?: string; // ISO timestamp - don't retry before this time
+  firstSeen?: string; // ISO timestamp - when we first discovered this video
+  title?: string; // saved on discovery so we don't lose it when RSS ages out
+  channelName?: string;
+  channelId?: string;
+  publishedDate?: string;
+  description?: string;
 }
 
 export interface SummaryIndex {

@@ -18,6 +18,19 @@ import type { FullSummary, SummaryIndex, ProcessedVideo } from "./lib/types.js";
 
 const MIN_VIDEO_DURATION_SECONDS = 90;
 
+// Give up retrying after 7 days from first discovery
+const MAX_RETRY_DAYS = 7;
+
+// Backoff schedule: hours to wait after each failed attempt
+// After attempt 1: wait 1h, after 2: 3h, after 3: 6h, then 12h, 24h, 24h...
+const BACKOFF_HOURS = [1, 3, 6, 12, 24];
+
+function getBackoffHours(attempts: number): number {
+  if (attempts <= 0) return 0;
+  const idx = Math.min(attempts - 1, BACKOFF_HOURS.length - 1);
+  return BACKOFF_HOURS[idx];
+}
+
 /**
  * Background function with 15-minute timeout.
  * Does the actual video processing: RSS check, transcript fetch,
@@ -34,15 +47,17 @@ export default async (req: Request, context: Context) => {
     }
 
     let processedVideos = await getProcessedVideos();
-    const processedSet = new Set(
+    const completedSet = new Set(
       processedVideos
-        .filter((v) => v.status === "completed" || v.status === "no-transcript")
+        .filter((v) => v.status === "completed")
         .map((v) => v.videoId)
     );
 
     let summariesIndex = await getSummariesIndex();
     let slackMessageCount = 0;
+    const now = new Date();
 
+    // Phase 1: Discover new videos from RSS feeds
     for (const channel of channels) {
       let entries;
       try {
@@ -52,178 +67,181 @@ export default async (req: Request, context: Context) => {
         continue;
       }
 
-      // Filter to 48-hour window
+      // Filter to 48-hour window for new discovery
       const recentEntries = entries.filter((e) =>
         isWithinTimeWindow(e.publishedDate, 48)
       );
 
       for (const entry of recentEntries) {
-        if (processedSet.has(entry.videoId)) continue;
+        if (completedSet.has(entry.videoId)) continue;
 
-        const videoUrl = `https://youtube.com/watch?v=${entry.videoId}`;
-
-        // Check existing attempts for this video
-        const existing = processedVideos.find(
-          (v) => v.videoId === entry.videoId
-        );
-        const attempts = existing ? existing.attempts : 0;
-
-        // After 3 failed transcript attempts, mark as no-transcript
-        if (attempts >= 3) {
-          console.log(
-            `Giving up on transcript for ${entry.title} after ${attempts} attempts`
-          );
-          const processed: ProcessedVideo = {
-            videoId: entry.videoId,
-            processedAt: new Date().toISOString(),
-            attempts,
-            status: "no-transcript",
-          };
-          processedVideos = processedVideos.filter(
-            (v) => v.videoId !== entry.videoId
-          );
-          processedVideos.push(processed);
-          processedSet.add(entry.videoId);
-          continue;
-        }
-
-        // Try to fetch transcript
-        const segments = await fetchTranscript(entry.videoId);
-
-        if (!segments) {
-          console.log(`No transcript for ${entry.title} (attempt ${attempts + 1})`);
-
-          // Update attempt count
-          const updated: ProcessedVideo = {
-            videoId: entry.videoId,
-            processedAt: new Date().toISOString(),
-            attempts: attempts + 1,
-            status: "pending",
-          };
-          processedVideos = processedVideos.filter(
-            (v) => v.videoId !== entry.videoId
-          );
-          processedVideos.push(updated);
-
-          // Post Slack alert on first attempt only
-          if (attempts === 0) {
-            if (slackMessageCount > 0) await delay(500);
-            await postNoTranscriptAlert(entry.title, videoUrl);
-            slackMessageCount++;
-          }
-          continue;
-        }
-
-        // Skip very short videos
-        const duration = estimateDuration(segments);
-        if (duration < MIN_VIDEO_DURATION_SECONDS) {
-          console.log(
-            `Skipping short video (${duration}s): ${entry.title}`
-          );
+        // Save metadata on first discovery so we never lose track
+        const existing = processedVideos.find((v) => v.videoId === entry.videoId);
+        if (!existing) {
           processedVideos.push({
             videoId: entry.videoId,
-            processedAt: new Date().toISOString(),
-            attempts: 1,
-            status: "completed",
-          });
-          processedSet.add(entry.videoId);
-          continue;
-        }
-
-        // Format transcript and truncate if needed
-        const formatted = formatTranscriptWithTimestamps(segments);
-        const { text: transcript } = truncateTranscript(formatted);
-
-        // Summarize with Claude
-        let summarizeResult;
-        try {
-          summarizeResult = await summarizeTranscript({
+            processedAt: now.toISOString(),
+            attempts: 0,
+            status: "pending",
+            firstSeen: now.toISOString(),
             title: entry.title,
             channelName: entry.channelName || channel.channelName,
+            channelId: channel.channelId,
             publishedDate: entry.publishedDate,
             description: entry.description,
-            transcript,
           });
-        } catch (err) {
-          console.error(`Summarization failed for ${entry.title}:`, err);
-          if (slackMessageCount > 0) await delay(500);
-          await postSummarizationFailedAlert(entry.title, videoUrl);
-          slackMessageCount++;
-
-          processedVideos.push({
-            videoId: entry.videoId,
-            processedAt: new Date().toISOString(),
-            attempts: attempts + 1,
-            status: "completed",
-          });
-          processedSet.add(entry.videoId);
-          continue;
         }
+      }
+    }
 
-        const now = new Date().toISOString();
+    // Phase 2: Process all pending/retrying videos that are ready
+    const videosToProcess = processedVideos.filter((v) => {
+      if (v.status === "completed") return false;
 
-        // Build full summary object
-        const fullSummary: FullSummary = {
-          videoId: entry.videoId,
-          title: entry.title,
-          channelName: entry.channelName || channel.channelName,
-          channelId: channel.channelId,
-          publishedDate: entry.publishedDate,
-          processedAt: now,
-          videoUrl,
-          description: entry.description,
-          status: "completed",
-          estimatedDurationSeconds: duration,
-          summary: summarizeResult.summary,
-          tokenUsage: summarizeResult.tokenUsage,
-        };
+      // Check if we've exceeded the max retry window (7 days from first discovery)
+      const firstSeen = v.firstSeen ? new Date(v.firstSeen) : new Date(v.processedAt);
+      const daysSinceFirstSeen = (now.getTime() - firstSeen.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceFirstSeen > MAX_RETRY_DAYS) {
+        // Truly give up after 7 days
+        if (v.status !== "no-transcript") {
+          console.log(`Giving up on ${v.title || v.videoId} after ${daysSinceFirstSeen.toFixed(1)} days (${v.attempts} attempts)`);
+          v.status = "no-transcript";
+          v.processedAt = now.toISOString();
+        }
+        return false;
+      }
 
-        // Save to Blobs
-        await setSummary(entry.videoId, fullSummary);
+      // Check backoff: don't retry before retryAfter
+      if (v.retryAfter && new Date(v.retryAfter) > now) {
+        return false;
+      }
 
-        // Update index (prepend for newest-first)
-        const indexEntry: SummaryIndex = {
-          videoId: entry.videoId,
-          channelName: fullSummary.channelName,
-          channelId: channel.channelId,
-          title: entry.title,
-          publishedDate: entry.publishedDate,
-          processedAt: now,
-          importanceScore: summarizeResult.summary.importanceScore,
-          tldr: summarizeResult.summary.tldr,
-          status: "completed",
-        };
-        summariesIndex = [indexEntry, ...summariesIndex];
+      return true;
+    });
 
-        // Log usage
-        await appendUsageLog({
-          date: now.split("T")[0],
-          videoId: entry.videoId,
-          inputTokens: summarizeResult.tokenUsage.inputTokens,
-          outputTokens: summarizeResult.tokenUsage.outputTokens,
-          estimatedCost: summarizeResult.tokenUsage.estimatedCost,
-          isAdHoc: false,
+    for (const video of videosToProcess) {
+      if (completedSet.has(video.videoId)) continue;
+
+      const videoUrl = `https://youtube.com/watch?v=${video.videoId}`;
+      const title = video.title || video.videoId;
+
+      // Try to fetch transcript
+      const segments = await fetchTranscript(video.videoId);
+
+      if (!segments) {
+        video.attempts += 1;
+        const backoffHours = getBackoffHours(video.attempts);
+        const retryAfter = new Date(now.getTime() + backoffHours * 60 * 60 * 1000);
+        video.retryAfter = retryAfter.toISOString();
+        video.status = "retrying";
+        video.processedAt = now.toISOString();
+
+        console.log(`No transcript for ${title} (attempt ${video.attempts}, next retry in ${backoffHours}h)`);
+
+        // Post Slack alert on first attempt only
+        if (video.attempts === 1) {
+          if (slackMessageCount > 0) await delay(500);
+          await postNoTranscriptAlert(title, videoUrl);
+          slackMessageCount++;
+        }
+        continue;
+      }
+
+      // Skip very short videos
+      const duration = estimateDuration(segments);
+      if (duration < MIN_VIDEO_DURATION_SECONDS) {
+        console.log(`Skipping short video (${duration}s): ${title}`);
+        video.status = "completed";
+        video.processedAt = now.toISOString();
+        video.attempts += 1;
+        completedSet.add(video.videoId);
+        continue;
+      }
+
+      // Format transcript and truncate if needed
+      const formatted = formatTranscriptWithTimestamps(segments);
+      const { text: transcript } = truncateTranscript(formatted);
+
+      // Summarize with Claude
+      let summarizeResult;
+      try {
+        summarizeResult = await summarizeTranscript({
+          title,
+          channelName: video.channelName || "",
+          publishedDate: video.publishedDate || "",
+          description: video.description || "",
+          transcript,
         });
-
-        // Post to Slack
+      } catch (err) {
+        console.error(`Summarization failed for ${title}:`, err);
         if (slackMessageCount > 0) await delay(500);
-        await postToSlack(fullSummary);
+        await postSummarizationFailedAlert(title, videoUrl);
         slackMessageCount++;
 
-        // Mark as processed
-        processedVideos = processedVideos.filter(
-          (v) => v.videoId !== entry.videoId
-        );
-        processedVideos.push({
-          videoId: entry.videoId,
-          processedAt: now,
-          attempts: attempts + 1,
-          status: "completed",
-        });
-        processedSet.add(entry.videoId);
-
-        console.log(`Processed: ${entry.title}`);
+        video.status = "completed";
+        video.processedAt = now.toISOString();
+        video.attempts += 1;
+        completedSet.add(video.videoId);
+        continue;
       }
+
+      const nowStr = now.toISOString();
+
+      // Build full summary object
+      const fullSummary: FullSummary = {
+        videoId: video.videoId,
+        title,
+        channelName: video.channelName || "",
+        channelId: video.channelId || "",
+        publishedDate: video.publishedDate || "",
+        processedAt: nowStr,
+        videoUrl,
+        description: video.description || "",
+        status: "completed",
+        estimatedDurationSeconds: duration,
+        summary: summarizeResult.summary,
+        tokenUsage: summarizeResult.tokenUsage,
+      };
+
+      // Save to Blobs
+      await setSummary(video.videoId, fullSummary);
+
+      // Update index (prepend for newest-first)
+      const indexEntry: SummaryIndex = {
+        videoId: video.videoId,
+        channelName: fullSummary.channelName,
+        channelId: video.channelId || "",
+        title,
+        publishedDate: video.publishedDate || "",
+        processedAt: nowStr,
+        importanceScore: summarizeResult.summary.importanceScore,
+        tldr: summarizeResult.summary.tldr,
+        status: "completed",
+      };
+      summariesIndex = [indexEntry, ...summariesIndex];
+
+      // Log usage
+      await appendUsageLog({
+        date: nowStr.split("T")[0],
+        videoId: video.videoId,
+        inputTokens: summarizeResult.tokenUsage.inputTokens,
+        outputTokens: summarizeResult.tokenUsage.outputTokens,
+        estimatedCost: summarizeResult.tokenUsage.estimatedCost,
+        isAdHoc: false,
+      });
+
+      // Post to Slack
+      if (slackMessageCount > 0) await delay(500);
+      await postToSlack(fullSummary);
+      slackMessageCount++;
+
+      // Mark as completed
+      video.status = "completed";
+      video.processedAt = nowStr;
+      video.attempts += 1;
+      completedSet.add(video.videoId);
+
+      console.log(`Processed: ${title}`);
     }
 
     // Prune old processed entries and save

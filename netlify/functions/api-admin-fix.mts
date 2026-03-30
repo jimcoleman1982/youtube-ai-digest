@@ -52,8 +52,8 @@ export default async function handler(request: Request) {
   const processed = await getProcessedVideos();
   const resetIds: string[] = [];
   const updated = processed.filter((v) => {
-    if (v.status === "no-transcript" && v.attempts >= 3) {
-      resetIds.push(v.id);
+    if (v.status === "no-transcript") {
+      resetIds.push(v.videoId);
       return false; // Remove from processed list so they retry
     }
     return true;

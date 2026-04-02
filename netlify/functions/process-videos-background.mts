@@ -22,8 +22,8 @@ const MIN_VIDEO_DURATION_SECONDS = 90;
 const MAX_RETRY_DAYS = 7;
 
 // Backoff schedule: hours to wait after each failed attempt
-// After attempt 1: wait 1h, after 2: 3h, after 3: 6h, then 12h, 24h, 24h...
-const BACKOFF_HOURS = [1, 3, 6, 12, 24];
+// Capped at 3h so a tunnel outage never causes a 24h+ processing gap
+const BACKOFF_HOURS = [1, 2, 3, 3, 3];
 
 function getBackoffHours(attempts: number): number {
   if (attempts <= 0) return 0;

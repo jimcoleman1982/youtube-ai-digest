@@ -46,7 +46,24 @@ export default async (req: Request, context: Context) => {
     const digest = await generateDigest(period, startDate, endDate);
 
     if (!digest) {
-      console.log(`digest-background: no videos for ${period}, skipping`);
+      console.log(`digest-background: no videos for ${period}, sending no-content notice`);
+      // Always notify Slack so Jim knows the system ran, even with nothing to report
+      const webhookUrl =
+        Netlify.env.get("SLACK_DIGEST_WEBHOOK_URL") ||
+        process.env.SLACK_WEBHOOK_URL;
+      if (webhookUrl && period === "daily") {
+        const dateLabel = new Date(endDate + "T12:00:00").toLocaleDateString(
+          "en-US",
+          { weekday: "long", month: "long", day: "numeric", year: "numeric" }
+        );
+        await fetch(webhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: `_No new AI content processed for ${dateLabel}. System is running fine -- nothing to summarize today._`,
+          }),
+        });
+      }
       return;
     }
 

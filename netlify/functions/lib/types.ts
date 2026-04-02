@@ -82,6 +82,12 @@ export interface TranscriptSegment {
   duration: number; // in ms
 }
 
+export interface TranscriptFetchResult {
+  segments: TranscriptSegment[] | null;
+  /** true when the proxy confirmed no captions exist (status OK, no tracks) — skip retries */
+  permanent: boolean;
+}
+
 export interface VideoEntry {
   videoId: string;
   title: string;

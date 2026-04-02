@@ -1,13 +1,16 @@
-import type { TranscriptSegment } from "./types.js";
+import type { TranscriptSegment, TranscriptFetchResult } from "./types.js";
 
 /**
  * Fetch transcript for a YouTube video.
  * Strategy 1: Local proxy via TRANSCRIPT_PROXY_URL (residential IP, most reliable)
  * Strategy 2: Edge function proxy (datacenter IP, works for some videos)
+ *
+ * Returns { segments, permanent } where permanent=true means the proxy confirmed
+ * the video has no captions (safe to skip retries).
  */
 export async function fetchTranscript(
   videoId: string
-): Promise<TranscriptSegment[] | null> {
+): Promise<TranscriptFetchResult> {
   // Strategy 1: Local proxy (residential IP via Cloudflare Tunnel)
   const proxyUrl = Netlify.env.get("TRANSCRIPT_PROXY_URL");
   const proxySecret = Netlify.env.get("TRANSCRIPT_PROXY_SECRET") || "";
@@ -30,7 +33,14 @@ export async function fetchTranscript(
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.segments) && data.segments.length > 0) {
-          return data.segments as TranscriptSegment[];
+          return { segments: data.segments as TranscriptSegment[], permanent: false };
+        }
+        // If proxy says video permanently has no captions, skip Strategy 2
+        if (data.permanent) {
+          console.log(
+            `Local proxy: permanent no-caption for ${videoId}: ${data.error || "no captions"}`
+          );
+          return { segments: null, permanent: true };
         }
         console.log(
           `Local proxy: no transcript for ${videoId}: ${data.error || "no segments"}`
@@ -56,7 +66,7 @@ export async function fetchTranscript(
       console.error(
         `Edge proxy returned ${res.status} for ${videoId}`
       );
-      return null;
+      return { segments: null, permanent: false };
     }
 
     const data = await res.json();
@@ -65,13 +75,14 @@ export async function fetchTranscript(
       console.log(
         `Edge proxy: no transcript for ${videoId}: ${data.error || "unknown"}`
       );
-      return null;
+      return { segments: null, permanent: false };
     }
 
-    return parseTranscriptXml(data.transcript);
+    const segments = parseTranscriptXml(data.transcript);
+    return { segments, permanent: false };
   } catch (err) {
     console.error(`Edge proxy error for ${videoId}:`, err);
-    return null;
+    return { segments: null, permanent: false };
   }
 }
 

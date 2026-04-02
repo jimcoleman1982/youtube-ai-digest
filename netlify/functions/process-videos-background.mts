@@ -126,10 +126,21 @@ export default async (req: Request, context: Context) => {
       const title = video.title || video.videoId;
 
       // Try to fetch transcript
-      const segments = await fetchTranscript(video.videoId);
+      const transcriptResult = await fetchTranscript(video.videoId);
+      const segments = transcriptResult.segments;
 
       if (!segments) {
         video.attempts += 1;
+
+        // If the proxy confirmed this video has no captions, give up after 2 attempts
+        // (2 attempts to guard against transient misdetection)
+        if (transcriptResult.permanent && video.attempts >= 2) {
+          console.log(`Permanent no-caption for ${title} (confirmed after ${video.attempts} attempts). Marking no-transcript.`);
+          video.status = "no-transcript";
+          video.processedAt = now.toISOString();
+          continue;
+        }
+
         const backoffHours = getBackoffHours(video.attempts);
         const retryAfter = new Date(now.getTime() + backoffHours * 60 * 60 * 1000);
         video.retryAfter = retryAfter.toISOString();

@@ -55,7 +55,7 @@ export default async (req: Request, context: Context) => {
 
       // Test 2: Through fetchTranscript (full pipeline)
       const startTime = Date.now();
-      const segments = await fetchTranscript(testVideoId);
+      const transcriptResult = await fetchTranscript(testVideoId);
       const elapsed = Date.now() - startTime;
 
       return Response.json({
@@ -67,9 +67,10 @@ export default async (req: Request, context: Context) => {
         },
         proxyResult,
         fetchTranscriptResult: {
-          success: segments !== null && segments.length > 0,
-          segmentCount: segments?.length || 0,
-          firstSegment: segments?.[0] || null,
+          success: transcriptResult.segments !== null && transcriptResult.segments.length > 0,
+          segmentCount: transcriptResult.segments?.length || 0,
+          firstSegment: transcriptResult.segments?.[0] || null,
+          permanent: transcriptResult.permanent,
           elapsedMs: elapsed,
         },
       });

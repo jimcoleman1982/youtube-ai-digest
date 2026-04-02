@@ -20,6 +20,20 @@ export default async (req: Request, context: Context) => {
       });
     }
 
+    // Clear retryAfter backoff for all retrying videos so they process on next run
+    if (action === "clear-backoff") {
+      const processedVideos = await getProcessedVideos();
+      let cleared = 0;
+      for (const v of processedVideos) {
+        if (v.status === "retrying" && v.retryAfter) {
+          delete v.retryAfter;
+          cleared++;
+        }
+      }
+      await setProcessedVideos(processedVideos);
+      return Response.json({ cleared, message: `Cleared backoff for ${cleared} retrying videos` });
+    }
+
     // Test transcript fetch
     const testVideoId = url.searchParams.get("test");
     if (testVideoId) {

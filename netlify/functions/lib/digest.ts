@@ -22,10 +22,10 @@ export async function generateDigest(
 ): Promise<DigestResult | null> {
   const index = await getSummariesIndex();
 
-  // Filter to date range
+  // Filter to date range (startDate/endDate are UTC ISO timestamps)
   const filtered = index.filter((s) => {
-    const d = (s.processedAt || s.publishedDate || "").split("T")[0];
-    return d >= startDate && d <= endDate;
+    const d = s.processedAt || s.publishedDate || "";
+    return d >= startDate && d < endDate;
   });
 
   if (filtered.length === 0) {
